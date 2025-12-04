@@ -1,0 +1,30 @@
+# --- 1. SEGURIDAD (CRÍTICO: Nunca subir esto) ---
+.env
+cookies.txt
+.streamlit/secrets.toml
+
+# --- 2. ENTORNOS VIRTUALES Y PYTHON ---
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# --- 3. DATOS GENERADOS (Carpetas que crea el script) ---
+# Estas carpetas se crearán solas al ejecutar, no las subas
+videos_originales/
+recortes_generados/
+db_chats/
+db_partidos/
+
+# --- 4. ARCHIVOS SUELTOS TEMPORALES ---
+*.mp4
+*.jpg
+*.png
+*.log
+frame_temp.jpg
+video_temp.mp4
+
+# --- 5. SISTEMA OPERATIVO ---
+.DS_Store
+Thumbs.db
