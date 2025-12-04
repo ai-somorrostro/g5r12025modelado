@@ -1,6 +1,7 @@
 import requests
 import json
 import re
+import os
 import streamlit as st # Necesario para st.session_state y st.error
 import config
 from modules import video_manager # Necesitamos funciones de video aquí
