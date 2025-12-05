@@ -107,7 +107,7 @@ def render_chat_area():
                         with open(msg["video_path"], "rb") as file:
                             st.download_button("⬇️", file, os.path.basename(msg["video_path"]), "video/mp4", key=f"dl_{idx}")
                         
-                        if st.button("🧠 Táctica", key=f"tac_{idx}"):
+                        if st.button("🧠 Análisis táctico", key=f"tac_{idx}"):
                             with st.spinner("Analizando..."):
                                 ana = ai_agent.analizar_tactica(msg["video_path"])
                                 st.session_state.mensajes.append({"role": "assistant", "content": f"🔍 {ana}"})
@@ -130,10 +130,19 @@ def render_chat_area():
                 
                 ctx = json.dumps(st.session_state['datos_partido'], ensure_ascii=False)
                 sys_prompt = f"""
-                Eres experto deportivo. JSON: {ctx}
-                SI PIDEN VIDEO: Responde JSON {{ "accion": "cortar", "tiempo_video": "MM:SS", "duracion": 15, "descripcion": "titulo" }}
-                SI NO: Texto.
-                """
+                Eres un analista deportivo experto. Tienes los datos del partido en este JSON: {ctx}
+               SIGUE ESTAS REGLAS AL PIE DE LA LETRA:
+
+            1. SI EL USUARIO PIDE INFORMACIÓN (Texto):
+               - Preguntas como: "¿Cómo quedó?", "¿Quién marcó?", "¿Hubo tarjetas?", "Resumen", "¿Cuál fue el resultado?", "¿Quién jugó mejor?".
+               - RESPONDE SOLO CON TEXTO. Explica el resultado o el dato usando el JSON.
+               - OBLIGATORIO: Termina SIEMPRE con una pregunta sugerente para seguir la charla. (Ej: "¿Quieres ver el gol?", "¿Te enseño la tarjeta roja?", "¿Vemos el resumen?").
+               - PROHIBIDO generar JSON de corte en este caso.
+
+            2. SI EL USUARIO PIDE VISUALIZAR (Video):
+               - Solo si usa verbos explícitos como: "Quiero ver", "Enséñame", "Muestra", "Sácame un clip".
+               - ENTONCES responde SOLO con el JSON: {{ "accion": "cortar", "tiempo_video": "MM:SS", "duracion": 15, "descripcion": "titulo_breve" }}
+            """
                 
                 msgs = [{"role": "system", "content": sys_prompt}] + \
                        [{"role": m["role"], "content": m["content"]} for m in st.session_state.mensajes[-6:] if "video_path" not in m]
