@@ -6,7 +6,7 @@
 ![FFmpeg](https://img.shields.io/badge/Tool-FFmpeg-007808?style=flat&logo=ffmpeg&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Stable-success)
 
-**IA Video Analyst Pro** es un **Agente Multimodal RAG** (Retrieval-Augmented Generation) avanzado, diseñado para el análisis deportivo automatizado.
+**IA Video Analyst Pro** es un **Agente Multimodal** avanzado, diseñado para el análisis deportivo automatizado.
 
 El sistema ingesta videos de partidos (YouTube), los analiza visualmente fotograma a fotograma utilizando **Google Gemini 3 Pro**, y permite al usuario interactuar mediante un chat inteligente. Lo que diferencia a este proyecto es su capacidad de **"Tool Use" (Uso de Herramientas)**: el asistente no solo responde texto, sino que **ejecuta comandos de edición de video** para recortar y entregar *highlights* (goles, tarjetas, jugadas) automáticamente bajo demanda.
 
