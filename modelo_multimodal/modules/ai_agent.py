@@ -2,12 +2,12 @@ import requests
 import json
 import re
 import os
-import streamlit as st # Necesario para st.session_state y st.error
+import streamlit as st
 import config
-from modules import video_manager # Necesitamos funciones de video aquí
+from modules import video_manager, data_manager
 
 def actualizar_tokens(usage):
-    """Suma los tokens al contador global"""
+    """Suma los tokens al contador global en la sesión"""
     if usage and 'tokens_total' in st.session_state:
         st.session_state.tokens_total["input"] += usage.get("prompt_tokens", 0)
         st.session_state.tokens_total["output"] += usage.get("completion_tokens", 0)
@@ -16,7 +16,9 @@ def actualizar_tokens(usage):
 def analizar_tactica(video_path):
     base64_img = video_manager.capturar_frame(video_path)
     if not base64_img: return "Error al capturar imagen."
+    
     prompt = "Analiza tácticamente esta imagen. Posicionamiento, faltas, contexto. Sé breve."
+    
     try:
         payload = {
             "model": config.MODELO_VISION,
@@ -25,7 +27,6 @@ def analizar_tactica(video_path):
         resp = requests.post(config.URL_ENDPOINT, headers={"Authorization": f"Bearer {config.API_KEY}"}, json=payload)
         resp_json = resp.json()
         
-        # Guardar tokens
         if 'usage' in resp_json:
             actualizar_tokens(resp_json['usage'])
             
@@ -34,19 +35,21 @@ def analizar_tactica(video_path):
         return f"Error: {e}"
 
 def analizar_video_con_ia(video_id, url_origen):
-    ruta_json = os.path.join(config.CARPETA_DB, f"{video_id}.json")
-    ruta_video = video_manager.obtener_ruta_video(video_id)
-    
-    if os.path.exists(ruta_json):
-        with open(ruta_json, 'r', encoding='utf-8') as f:
-            datos = json.load(f)
-            if "url_origen" not in datos:
-                datos["url_origen"] = url_origen
-                with open(ruta_json, "w", encoding="utf-8") as f2:
-                    json.dump(datos, f2, ensure_ascii=False, indent=2)
-            return datos
+    # 1. Intentar cargar de disco
+    datos = data_manager.cargar_analisis(video_id)
+    if datos:
+        if "url_origen" not in datos:
+            datos["url_origen"] = url_origen
+            data_manager.guardar_analisis(video_id, datos)
+        return datos
 
+    # 2. Si no existe, llamar a la API
     try:
+        ruta_video = video_manager.obtener_ruta_video(video_id)
+        # Comprobar que el video existe
+        if not os.path.exists(ruta_video):
+            return None
+
         base64_video = video_manager.encode_video_to_base64(ruta_video)
         data_url = f"data:video/mp4;base64,{base64_video}"
         
@@ -65,13 +68,12 @@ def analizar_video_con_ia(video_id, url_origen):
 
         response = requests.post(config.URL_ENDPOINT, headers={"Authorization": f"Bearer {config.API_KEY}"}, json=payload)
         response_json = response.json()
-
-        # Guardar tokens de la visión (esto consume mucho)
+        
         if 'usage' in response_json:
             actualizar_tokens(response_json['usage'])
 
         if 'error' in response_json:
-            st.error(f"❌ Error de la API: {response_json['error']}")
+            print(f"Error API: {response_json['error']}")
             return None
 
         content = response_json['choices'][0]['message']['content']
@@ -79,16 +81,27 @@ def analizar_video_con_ia(video_id, url_origen):
         match_json = re.search(r'(\{.*\})', clean, re.DOTALL)
         if match_json: clean = match_json.group(1)
         
-        try:
-            datos = json.loads(clean)
-            datos["url_origen"] = url_origen 
-            with open(ruta_json, "w", encoding="utf-8") as f:
-                json.dump(datos, f, ensure_ascii=False, indent=2)
-            return datos
-        except json.JSONDecodeError:
-            st.error("Error al leer el JSON de la IA.")
-            return None
+        datos = json.loads(clean)
+        datos["url_origen"] = url_origen 
+        
+        data_manager.guardar_analisis(video_id, datos)
+        return datos
 
     except Exception as e:
-        st.error(f"Error conexión: {e}")
+        print(f"Error IA: {e}")
         return None
+
+# --- ESTA ES LA FUNCIÓN QUE FALTABA ---
+def obtener_respuesta_chat(mensajes_historial):
+    """Envía el historial al chat y devuelve la respuesta cruda"""
+    try:
+        resp = requests.post(config.URL_ENDPOINT, headers={"Authorization": f"Bearer {config.API_KEY}"}, 
+                             json={"model": config.MODELO_CHAT, "messages": mensajes_historial})
+        resp_json = resp.json()
+        
+        if 'usage' in resp_json:
+            actualizar_tokens(resp_json['usage'])
+            
+        return resp_json['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Error API: {e}"
