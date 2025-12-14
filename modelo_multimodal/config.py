@@ -29,3 +29,19 @@ def crear_carpetas():
 
 # Ejecutar al importar
 crear_carpetas()
+
+# ... imports ...
+
+# --- CLAVES ELASTIC ---
+ELASTIC_ID = os.getenv("ELASTIC_ID")
+ELASTIC_KEY = os.getenv("ELASTIC_KEY")
+
+# --- CONFIGURACIÓN ELASTICSEARCH ---
+# IMPORTANTE: Cambia 'http' por 'https' porque tienes seguridad activada
+ELASTIC_HOSTS = [
+    "https://192.199.1.67:9200",   # Nodo 1
+    "https://192.199.1.112:9200",  # Nodo 2
+    "https://192.199.1.41:9200"   # Nodo 3
+]
+
+INDEX_NAME = "video_clips_vector"
