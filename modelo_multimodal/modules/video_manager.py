@@ -1,10 +1,10 @@
 import os
-import yt_dlp
 import re
+import yt_dlp
 import subprocess
 import cv2
 import base64
-import streamlit as st # Necesario para tus st.error originales
+import streamlit as st 
 import config
 
 def extraer_id_youtube(url):
@@ -17,8 +17,10 @@ def obtener_ruta_video(video_id):
 
 def descargar_video(url, video_id):
     ruta_destino = obtener_ruta_video(video_id)
+    
     if os.path.exists(ruta_destino) and os.path.getsize(ruta_destino) > 0:
         return True
+
     if not os.path.exists(config.COOKIES_FILE):
         st.error(f"⚠️ ERROR: Falta '{config.COOKIES_FILE}'.")
         return False
@@ -49,7 +51,6 @@ def capturar_frame(video_path):
     ret, frame = cap.read()
     cap.release()
     if ret:
-        # Usamos una ruta temporal fija en la raíz
         temp_path = os.path.join(config.BASE_DIR, "frame_temp.jpg")
         cv2.imwrite(temp_path, frame)
         with open(temp_path, "rb") as img_file:
@@ -62,6 +63,7 @@ def cortar_video_ffmpeg(video_id, tiempo_inicio, descripcion, duracion=15):
     nombre_salida = os.path.join(config.CARPETA_RECORTES, f"{video_id}_clip_{tiempo_clean}_{nombre_clean}.mp4")
     
     ruta_origen = obtener_ruta_video(video_id)
+    
     if not os.path.exists(ruta_origen):
         return None 
 
@@ -72,3 +74,36 @@ def cortar_video_ffmpeg(video_id, tiempo_inicio, descripcion, duracion=15):
     except Exception as e:
         st.error(f"Error FFmpeg: {e}")
         return None
+
+# --- FUNCIÓN CRÍTICA PARA EVITAR ERROR 500 ---
+def optimizar_video_para_ia(ruta_original):
+    """
+    Crea una versión ligera (1fps, 360p, sin audio) para enviar a la API.
+    Esto reduce el peso drásticamente y evita que Google Gemini falle.
+    """
+    if not os.path.exists(ruta_original):
+        return None
+        
+    # Nombre del archivo optimizado
+    ruta_optimizada = ruta_original.replace(".mp4", "_ia_low.mp4")
+    
+    # Si ya existe, lo devolvemos directamente para ahorrar tiempo
+    if os.path.exists(ruta_optimizada) and os.path.getsize(ruta_optimizada) > 0:
+        return ruta_optimizada
+
+    # Comando FFmpeg para reducir tamaño agresivamente
+    comando = [
+        "ffmpeg", "-i", ruta_original,
+        "-vf", "fps=1,scale=-2:360", # 1 frame por segundo, 360p
+        "-c:v", "libx264", "-crf", "32", "-preset", "ultrafast",
+        "-an", # Quitar audio
+        "-y", "-loglevel", "error",
+        ruta_optimizada
+    ]
+    
+    try:
+        subprocess.run(comando, check=True)
+        return ruta_optimizada
+    except Exception as e:
+        print(f"Error optimizando: {e}")
+        return ruta_original # Si falla, devolvemos el original
