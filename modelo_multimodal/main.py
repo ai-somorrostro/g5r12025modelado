@@ -1,6 +1,7 @@
 import streamlit as st
 import config
 from modules import interface  # Importamos la UI que acabamos de crear
+from modules import video_rag # <--- NUEVO
 
 # --- CONFIGURACIÓN INICIAL ---
 st.set_page_config(page_title="IA Video Analyst Pro", page_icon="⚽", layout="wide")
@@ -23,3 +24,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Inicializar Elastic
+try:
+    video_rag.inicializar_indice()
+except Exception as e:
+    st.warning(f"⚠️ No se pudo conectar con Elasticsearch. El RAG no funcionará. Error: {e}")
