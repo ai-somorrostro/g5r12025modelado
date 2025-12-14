@@ -4,7 +4,7 @@ import os
 import json
 import time
 import re
-# Importamos la lógica interna
+from modules import video_rag
 import config
 from modules import video_manager, data_manager, ai_agent
 
@@ -16,13 +16,14 @@ def render_sidebar():
         # Métricas
         with st.expander("📊 Métricas de Consumo", expanded=True):
             col1, col2 = st.columns(2)
-            col1.metric("Input", f"{st.session_state.tokens_total['input']}", delta_color="off")
-            col2.metric("Output", f"{st.session_state.tokens_total['output']}", delta_color="off")
-            st.metric("Total Tokens", f"{st.session_state.tokens_total['total']}")
-            
-            if st.button("🔄 Resetear"):
-                st.session_state.tokens_total = {"input": 0, "output": 0, "total": 0}
-                st.rerun()
+            if 'tokens_total' in st.session_state:
+                col1.metric("Input", f"{st.session_state.tokens_total['input']}", delta_color="off")
+                col2.metric("Output", f"{st.session_state.tokens_total['output']}", delta_color="off")
+                st.metric("Total Tokens", f"{st.session_state.tokens_total['total']}")
+                
+                if st.button("🔄 Resetear"):
+                    st.session_state.tokens_total = {"input": 0, "output": 0, "total": 0}
+                    st.rerun()
 
         st.divider()
 
@@ -45,6 +46,50 @@ def render_sidebar():
                 else:
                     st.warning("Pega una URL.")
 
+        st.divider()
+        
+        # --- INDEXADOR MASIVO ---
+        if 'datos_partido' in st.session_state:
+            st.markdown("### ⚡ Acciones Rápidas")
+            datos = st.session_state['datos_partido']
+            vid_id = st.session_state.get('video_id')
+            
+            if st.button("🧠 Generar e Indexar TODOS los clips", help="Corta y guarda en Elasticsearch todos los eventos detectados"):
+                
+                progreso = st.progress(0)
+                total = len(datos['eventos'])
+
+                # Esto obliga a crear el índice con configuración vectorial ANTES de meter datos
+                try: video_rag.inicializar_indice()
+                except: pass
+                
+                ruta_mp4 = video_manager.obtener_ruta_video(vid_id)
+                if not os.path.exists(ruta_mp4):
+                    video_manager.descargar_video(datos.get("url_origen"), vid_id)
+
+                for i, evento in enumerate(datos['eventos']):
+                    ruta_clip = video_manager.cortar_video_ffmpeg(
+                        vid_id, 
+                        evento['tiempo_video'], 
+                        evento['descripcion']
+                    )
+                    
+                    if ruta_clip:
+                        try:
+                            video_rag.indexar_clip(
+                                ruta_clip=ruta_clip,
+                                descripcion=evento['descripcion'],
+                                timestamp=evento['tiempo_video'],
+                                video_id=vid_id
+                            )
+                        except: pass
+                    
+                    progreso.progress((i + 1) / total)
+                
+                st.success(f"¡{total} eventos indexados en tus máquinas virtuales!")
+                time.sleep(2)
+                st.rerun()
+                
         # Historial
         st.markdown("### 💬 Conversaciones")
         archivos = data_manager.listar_archivos_analisis()
@@ -61,7 +106,6 @@ def render_sidebar():
                     st.session_state['video_id'] = vid_id
                     st.session_state['mensajes'] = data_manager.cargar_chat_de_disco(vid_id)
                     
-                    # Auto-recovery
                     ruta_mp4 = video_manager.obtener_ruta_video(vid_id)
                     if not os.path.exists(ruta_mp4):
                         url = datos_archivo.get("url_origen")
@@ -71,6 +115,35 @@ def render_sidebar():
                     st.rerun()
             except: pass
 
+        # Buscador RAG
+        st.divider()
+        st.markdown("### 🧠 Buscador Semántico (RAG)")
+        st.caption("Busca jugadas en tu base de datos global (Elasticsearch)")
+        
+        query_rag = st.text_input("Ej: 'Gol de cabeza', 'Tarjeta roja'...")
+        
+        if query_rag:
+            with st.spinner("Buscando en las 3 máquinas virtuales..."):
+                video_rag.inicializar_indice()
+                resultados = video_rag.buscar_por_texto(query_rag)
+                
+                if resultados:
+                    for res in resultados:
+                        # Recuperamos el segundo exacto que detectó el RAG
+                        segundo = res.get('segundo_detectado', 0)
+                        
+                        # Mostramos título y detalles técnicos debajo
+                        st.markdown(f"**{res['descripcion']}**")
+                        st.caption(f"🎯 Detectado visualmente en el segundo: **{segundo}s** (Similitud: {res['score']:.4f})")
+                        
+                        if os.path.exists(res['ruta_video']):
+                            # 'start_time' hace que el video empiece justo donde ocurrió la acción
+                            st.video(res['ruta_video'], start_time=int(segundo))
+                        else:
+                            st.warning("El video original ya no existe en disco.")
+                else:
+                    st.info("No se encontraron coincidencias visuales.")
+        
         # Limpieza
         st.divider()
         if st.button("🗑️ Liberar Espacio", type="secondary"):
@@ -105,7 +178,7 @@ def render_chat_area():
                     if os.path.exists(msg["video_path"]):
                         st.video(msg["video_path"])
                         with open(msg["video_path"], "rb") as file:
-                            st.download_button("⬇️", file, os.path.basename(msg["video_path"]), "video/mp4", key=f"dl_{idx}")
+                            st.download_button("⬇️ Descargar", file, os.path.basename(msg["video_path"]), "video/mp4", key=f"dl_{idx}")
                         
                         if st.button("🧠 Análisis táctico", key=f"tac_{idx}"):
                             with st.spinner("Analizando..."):
@@ -126,65 +199,91 @@ def render_chat_area():
 
             with st.chat_message("assistant"):
                 placeholder = st.empty()
-                placeholder.write("🤖...")
+                placeholder.write("🤖 Pensando...")
                 
                 ctx = json.dumps(st.session_state['datos_partido'], ensure_ascii=False)
+                
                 sys_prompt = f"""
                 Eres un analista deportivo experto. Tienes los datos del partido en este JSON: {ctx}
-               SIGUE ESTAS REGLAS AL PIE DE LA LETRA:
-
-            1. SI EL USUARIO PIDE INFORMACIÓN (Texto):
-               - Preguntas como: "¿Cómo quedó?", "¿Quién marcó?", "¿Hubo tarjetas?", "Resumen", "¿Cuál fue el resultado?", "¿Quién jugó mejor?".
-               - RESPONDE SOLO CON TEXTO. Explica el resultado o el dato usando el JSON.
-               - OBLIGATORIO: Termina SIEMPRE con una pregunta sugerente para seguir la charla. (Ej: "¿Quieres ver el gol?", "¿Te enseño la tarjeta roja?", "¿Vemos el resumen?").
-               - PROHIBIDO generar JSON de corte en este caso.
-
-            2. SI EL USUARIO PIDE VISUALIZAR (Video):
-               - Solo si usa verbos explícitos como: "Quiero ver", "Enséñame", "Muestra", "Sácame un clip".
-               - ENTONCES responde SOLO con el JSON: {{ "accion": "cortar", "tiempo_video": "MM:SS", "duracion": 15, "descripcion": "titulo_breve" }}
-            """
                 
-                msgs = [{"role": "system", "content": sys_prompt}] + \
-                       [{"role": m["role"], "content": m["content"]} for m in st.session_state.mensajes[-6:] if "video_path" not in m]
+                SIGUE ESTAS REGLAS AL PIE DE LA LETRA:
+                1. SI EL USUARIO PIDE INFORMACIÓN (Texto): Responde texto + pregunta sugerente. NO generes JSON.
+                2. SI EL USUARIO PIDE VISUALIZAR (Video): Responde SOLO JSON: {{ "accion": "cortar", "tiempo_video": "MM:SS", "duracion": 15, "descripcion": "titulo_breve" }}
+                """
+                
+                try:
+                    msgs = [{"role": "system", "content": sys_prompt}] + \
+                           [{"role": m["role"], "content": m["content"]} for m in st.session_state.mensajes[-6:] if "video_path" not in m]
 
-                content = ai_agent.obtener_respuesta_chat(msgs)
-                
-                # Procesar
-                matches = re.findall(r'\{.*?\}', content, re.DOTALL)
-                videos = []
-                txt = content
-                
-                if matches:
-                    txt = ""
-                    for m in matches:
-                        try:
-                            cmd = json.loads(m)
-                            if cmd.get('accion') == 'cortar':
-                                placeholder.write(f"✂️ {cmd['descripcion']}...")
+                    content = ai_agent.obtener_respuesta_chat(msgs)
+                    
+                    # --- PARSEO ROBUSTO DE LA RESPUESTA ---
+                    # 1. Limpieza de Markdown
+                    content_clean = re.sub(r'```json\s*', '', content).replace('```', '')
+                    
+                    # 2. Búsqueda de JSON
+                    matches = re.findall(r'\{.*?\}', content_clean, re.DOTALL)
+                    videos = []
+                    txt = content # Por defecto es texto
+                    
+                    if matches:
+                        for m in matches:
+                            try:
+                                # Intento de corrección de comillas simples (error común de LLMs)
+                                if "'" in m and '"' not in m:
+                                    m = m.replace("'", '"')
                                 
-                                # Auto-recovery
-                                p_vid = video_manager.obtener_ruta_video(vid_id)
-                                if not os.path.exists(p_vid):
-                                    url = st.session_state['datos_partido'].get("url_origen")
-                                    if url: video_manager.descargar_video(url, vid_id)
+                                cmd = json.loads(m)
+                                if isinstance(cmd, dict) and cmd.get('accion') == 'cortar':
+                                    # Si encontramos un comando válido, limpiamos el texto
+                                    txt = ""
+                                    placeholder.write(f"✂️ Procesando: {cmd.get('descripcion')}...")
+                                    
+                                    # Auto-recovery
+                                    ruta_origen = video_manager.obtener_ruta_video(vid_id)
+                                    if not os.path.exists(ruta_origen):
+                                        url = datos.get("url_origen")
+                                        if url: 
+                                            st.toast("Descargando video...", icon="📥")
+                                            video_manager.descargar_video(url, vid_id)
+                                        else:
+                                            st.error("❌ Error: Falta el video original y no hay URL para bajarlo.")
 
-                                r = video_manager.cortar_video_ffmpeg(vid_id, cmd['tiempo_video'], cmd['descripcion'])
-                                if r: videos.append((r, f"Clip: **{cmd['descripcion']}**"))
-                        except: txt = content
+                                    # Corte
+                                    r = video_manager.cortar_video_ffmpeg(vid_id, cmd['tiempo_video'], cmd['descripcion'])
+                                    
+                                    if r:
+                                        # Indexar RAG
+                                        try:
+                                            video_rag.indexar_clip(r, cmd['descripcion'], cmd['tiempo_video'], vid_id)
+                                        except Exception as e:
+                                            print(f"Error indexando: {e}")
+                                        
+                                        videos.append((r, f"Clip: **{cmd['descripcion']}**"))
+                                    else:
+                                        st.error(f"❌ Error al generar el video: {cmd['descripcion']}")
+                            except Exception as e:
+                                # Si falla el JSON, no rompemos, simplemente se mostrará como texto
+                                print(f"Intento de JSON fallido: {e}")
 
-                if videos:
-                    placeholder.empty()
-                    for r, d in videos:
-                        st.write(d)
-                        st.video(r)
-                        with open(r, "rb") as f: st.download_button("⬇️", f, os.path.basename(r), "video/mp4", key=f"dln_{r}")
-                        st.session_state.mensajes.append({"role": "assistant", "content": d, "video_path": r})
-                else:
-                    placeholder.write(txt)
-                    st.session_state.mensajes.append({"role": "assistant", "content": txt})
-                
-                data_manager.guardar_chat_en_disco(vid_id, st.session_state.mensajes)
-                if videos: st.rerun()
+                    # Mostrar Resultados
+                    if videos:
+                        placeholder.empty()
+                        for r, d in videos:
+                            st.write(d)
+                            st.video(r)
+                            with open(r, "rb") as f: st.download_button("⬇️ Descargar", f, os.path.basename(r), "video/mp4", key=f"dl_n_{r}")
+                            st.session_state.mensajes.append({"role": "assistant", "content": d, "video_path": r})
+                    else:
+                        # Solo mostramos texto si no está vacío
+                        if txt.strip():
+                            placeholder.write(txt)
+                            st.session_state.mensajes.append({"role": "assistant", "content": txt})
+                    
+                    data_manager.guardar_chat_en_disco(vid_id, st.session_state.mensajes)
+                    if videos: st.rerun()
 
+                except Exception as e:
+                    st.error(f"Error: {e}")
     else:
         st.info("👈 Selecciona un partido.")
