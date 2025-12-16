@@ -13,8 +13,7 @@ import warnings
 # Silenciar warnings
 warnings.simplefilter('ignore', category=ElasticsearchWarning)
 
-# CONFIGURACIÓN DE DENSIDAD
-# 3 = Analizar 3 fotos cada segundo (Muy preciso)
+# DENSIDAD: 3 fotos por segundo
 FOTOS_POR_SEGUNDO = 3 
 
 # 1. CONEXIÓN
@@ -62,9 +61,6 @@ def inicializar_indice():
         es_client.indices.create(index=INDEX_NAME, mappings=mappings)
 
 def obtener_frames_alta_densidad(ruta_video):
-    """
-    Extrae FOTOS_POR_SEGUNDO frames de forma equidistante.
-    """
     cap = cv2.VideoCapture(ruta_video)
     if not cap.isOpened(): return []
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -74,7 +70,6 @@ def obtener_frames_alta_densidad(ruta_video):
     duracion_segundos = total_frames / fps
     total_fotos = int(duracion_segundos * FOTOS_POR_SEGUNDO)
     
-    # Puntos de corte exactos
     puntos = np.linspace(0, total_frames - 5, total_fotos, dtype=int)
     
     frames = []
@@ -93,47 +88,67 @@ def indexar_clip(ruta_clip, descripcion, timestamp, video_id):
     imagenes = obtener_frames_alta_densidad(ruta_clip)
     if not imagenes: return
 
-    print(f"📸 Indexando {len(imagenes)} vectores para: {descripcion}")
+    print(f"📸 Indexando {len(imagenes)} vectores Híbridos...")
 
     for i, img in enumerate(imagenes):
         try:
             vector = model.encode(img)
-            
-            # --- CÁLCULO DEL SEGUNDO REAL ---
-            # Si es la foto 9 y vamos a 3fps -> Es el segundo 3
             segundo_real = int(i / FOTOS_POR_SEGUNDO)
-            # --------------------------------
             
             doc = {
                 "descripcion": descripcion,
                 "ruta_video": ruta_clip,
                 "timestamp": timestamp,
                 "video_id": video_id,
-                "segundo_exacto": segundo_real, # Guardamos el segundo real, no el índice
+                "segundo_exacto": segundo_real,
                 "vector_embedding": vector.tolist()
             }
             es_client.index(index=INDEX_NAME, document=doc)
         except: pass
 
 def buscar_por_texto(query_texto, top_k=50):
+    """
+    BÚSQUEDA HÍBRIDA CALIBRADA
+    """
     if not es_client: return []
     
+    # 1. Traducción para CLIP (Visual)
     try:
         query_ingles = GoogleTranslator(source='auto', target='en').translate(query_texto)
     except:
         query_ingles = query_texto
 
-    vector_busqueda = model.encode(query_ingles)
+    # 2. Contexto Visual
+    query_visual = f"{query_ingles} scene in a soccer match"
+    vector_busqueda = model.encode(query_visual)
     
     try:
         response = es_client.search(
             index=INDEX_NAME,
+            
+            # --- PARTE VISUAL (CLIP) ---
+            # Le damos BOOST 0.9 para que sea lo más importante
             knn={
                 "field": "vector_embedding",
                 "query_vector": vector_busqueda.tolist(),
                 "k": top_k,
-                "num_candidates": 200
-            }
+                "num_candidates": 200,
+                "boost": 0.9
+            },
+            
+            # --- PARTE TEXTUAL (GEMINI) ---
+            # Le damos BOOST 0.1 (Muy bajo) para que solo ayude, no mande.
+            # Así evitamos scores de 3.0 por palabras comunes como "balón".
+            query={
+                "match": {
+                    "descripcion": {
+                        "query": query_texto, # Buscamos el texto original en español
+                        "boost": 0.1 
+                    }
+                }
+            },
+            
+            size=top_k
         )
         
         resultados_unicos = []
@@ -154,7 +169,7 @@ def buscar_por_texto(query_texto, top_k=50):
                     "segundo_detectado": sec
                 })
         
-        return resultados_unicos[:5]
+        return resultados_unicos[:3]
 
     except Exception as e:
         print(f"Error búsqueda: {e}")
