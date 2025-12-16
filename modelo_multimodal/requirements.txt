@@ -3,4 +3,8 @@ requests
 yt-dlp
 opencv-python
 python-dotenv
+elasticsearch
+sentence-transformers
+Pillow
+deep-translator
 watchdog
