@@ -24,11 +24,12 @@ try:
 
     es_client = Elasticsearch(
         config.ELASTIC_HOSTS,
-        api_key=(config.ELASTIC_ID, config.ELASTIC_KEY),
+        basic_auth=("elastic", "EsvXSauT7aDbvRQuM4YJ"),
         ssl_context=contexto_ssl,
         verify_certs=False,
         ssl_show_warn=False
     )
+
 except Exception as e:
     print(f"⚠️ Error conexión Elastic: {e}")
     es_client = None
